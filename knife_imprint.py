@@ -6,10 +6,8 @@
 
 import bmesh
 import bpy
-from bpy.props import BoolProperty
-from bpy.types import Operator, Panel, Scene
+from bpy.types import Operator, Panel
 from bpy.utils import register_class, unregister_class
-import itertools
 
 bl_info = {
     "name": "Knife Imprint",
