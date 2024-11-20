@@ -7,7 +7,8 @@
 import bmesh
 import bpy
 from bpy_extras.view3d_utils import region_2d_to_vector_3d
-from bpy.types import Operator, Panel
+from bpy.props import EnumProperty
+from bpy.types import Operator, Panel, Scene
 from bpy.utils import register_class, unregister_class
 from mathutils.bvhtree import BVHTree
 
@@ -15,7 +16,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 1, 0),
+    "version": (1, 1, 1),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -29,8 +30,10 @@ bl_info = {
 class KnifeImprint:
 
     @classmethod
-    def selection_project(cls, context, dest_object, src_object):
+    def selection_project(cls, context, dest_object, src_object, raycast_mode='AREA'):
         # make selected polygons on the dest_object by visible overlap of polygons from src_object
+        # raycast_mode = 'AREA' - raycast from all face vertices (select face if even one hits)
+        #               'FACEDOT' - raycast from face center
         if src_object and dest_object:
             # ray_cast from each vertex of dest_object along the viewport direction vector to check
             #   intersections with src_object
@@ -45,8 +48,16 @@ class KnifeImprint:
             bm.verts.ensure_lookup_table()
             bm.edges.ensure_lookup_table()
             bm.faces.ensure_lookup_table()
-            dest_vertices_co = [(dest_world_matrix * vertex.co, [face.index for face in vertex.link_faces])
-                                for vertex in bm.verts]
+            if raycast_mode == 'AREA':
+                # 'AREA'
+                dest_vertices_co = [(dest_world_matrix * vertex.co, [face.index for face in vertex.link_faces])
+                                    for vertex in bm.verts]
+            else:
+                # 'FACEDOT'
+                dest_vertices_co = [
+                    [cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts]), [face.index,]]
+                    for face in bm.faces
+                ]
             bm.free()
             # viewport direction vector
             region = next((_region for _region in context.area.regions if _region.type == 'WINDOW'), None)
@@ -100,9 +111,9 @@ class KnifeImprint:
             # call "knife project"
             #   calling with object without faces it works for all edges not only for boundary
             bpy.ops.mesh.knife_project()
-            # make new selection
-            bpy.ops.object.mode_set(mode='OBJECT')
-            cls.selection_project(context=context, dest_object=dest_object, src_object=src_object)
+            # make new selection;    commented by Paul, staying with the default selection
+            # bpy.ops.object.mode_set(mode='OBJECT')
+            # cls.selection_project(context=context, dest_object=dest_object, src_object=src_object)
             # remove copy
             bpy.data.objects.remove(selected_object_copy)
             # return mode back
@@ -111,6 +122,19 @@ class KnifeImprint:
             src_object.hide = False
             # force redraw areas
             cls._refresh_areas(context=context)
+
+    @staticmethod
+    def _face_center(vertices):
+        # returns the coordinates of the polygon center by coordinates if its vertexes
+        # vertices format = ((0.1, 0.0, 1.0), (1.0, 0.0, 1.0), ...)
+        x_list = [vertex[0] for vertex in vertices]
+        y_list = [vertex[1] for vertex in vertices]
+        z_list = [vertex[2] for vertex in vertices]
+        length = len(vertices)
+        x = sum(x_list) / length
+        y = sum(y_list) / length
+        z = sum(z_list) / length
+        return tuple((x, y, z))
 
     @staticmethod
     def _deselect_all(obj):
@@ -144,9 +168,16 @@ class KnifeImprint:
             icon='MOD_UVPROJECT'
         )
         # Selection Project
-        layout.operator(
+        op = layout.operator(
             operator='knifeimprint.selection_project',
             icon='MOD_BEVEL'
+        )
+        op.raycast_mode = context.scene.knifeimprint_prop_selection_mode
+        row = layout.row()
+        row.prop(
+            data=context.scene,
+            property='knifeimprint_prop_selection_mode',
+            expand=True
         )
 
 
@@ -157,6 +188,15 @@ class KnifeImpring_OT_selection_project(Operator):
     bl_label = 'Selection Project'
     bl_options = {'REGISTER', 'UNDO'}
 
+    raycast_mode = EnumProperty(
+        name='Selection Mode',
+        items=[
+            ('AREA', 'AREA', 'AREA', '', 0),
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1)
+        ],
+        default='AREA'
+    )
+
     def execute(self, context):
         selected_object = context.selected_objects[:]
         selected_object.remove(context.active_object)
@@ -164,7 +204,8 @@ class KnifeImpring_OT_selection_project(Operator):
         KnifeImprint.selection_project(
             context=context,
             dest_object=context.active_object,
-            src_object=selected_object
+            src_object=selected_object,
+            raycast_mode=self.raycast_mode
         )
         return {'FINISHED'}
 
@@ -203,6 +244,14 @@ class KnifeImprint_PT_panel(Panel):
 # REGISTER
 
 def register(ui=True):
+    Scene.knifeimprint_prop_selection_mode = EnumProperty(
+        name='Selection Mode',
+        items=[
+            ('AREA', 'AREA', 'AREA', '', 0),
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1)
+        ],
+        default='AREA'
+    )
     register_class(KnifeImpring_OT_knife_imprint)
     register_class(KnifeImpring_OT_selection_project)
     if ui:
