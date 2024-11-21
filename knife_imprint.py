@@ -10,13 +10,14 @@ from bpy_extras.view3d_utils import region_2d_to_vector_3d
 from bpy.props import EnumProperty
 from bpy.types import Operator, Panel, Scene
 from bpy.utils import register_class, unregister_class
+from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 1, 1),
+    "version": (1, 1, 2),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -34,6 +35,8 @@ class KnifeImprint:
         # make selected polygons on the dest_object by visible overlap of polygons from src_object
         # raycast_mode = 'AREA' - raycast from all face vertices (select face if even one hits)
         #               'FACEDOT' - raycast from face center
+        #               'AREA_OR' - raycast from all vertices (select face if all hits)
+        #               'AREA_FACEDOT' - raycast from all face vertices and from face center
         if src_object and dest_object:
             # ray_cast from each vertex of dest_object along the viewport direction vector to check
             #   intersections with src_object
@@ -50,10 +53,27 @@ class KnifeImprint:
             bm.faces.ensure_lookup_table()
             if raycast_mode == 'AREA':
                 # 'AREA'
+                # format: [(vertex.co, (face.index, face.index, ...)), ...]
                 dest_vertices_co = [(dest_world_matrix * vertex.co, [face.index for face in vertex.link_faces])
                                     for vertex in bm.verts]
+            elif raycast_mode == 'AREA_OR':
+                # 'AREA_OR'
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                dest_vertices_co = [(face.index, tuple(dest_world_matrix * vertex.co for vertex in face.verts))
+                                    for face in bm.faces]
+            elif raycast_mode == 'AREA_FACEDOT':
+                # 'AREA + FACEDOT'
+                # format: [(vertex.co, (face.index, face.index, ...)), ...]
+                dest_vertices_area = [(dest_world_matrix * vertex.co, [face.index for face in vertex.link_faces])
+                                    for vertex in bm.verts]
+                dest_vertices_facedot = [
+                    (Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts])), [face.index,])
+                    for face in bm.faces
+                ]
+                dest_vertices_co = dest_vertices_area + dest_vertices_facedot
             else:
                 # 'FACEDOT'
+                # format: [(vertex.co, (face.index, face.index, ...)), ...]
                 dest_vertices_co = [
                     [cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts]), [face.index,]]
                     for face in bm.faces
@@ -75,14 +95,25 @@ class KnifeImprint:
             src_bvh_tree = BVHTree.FromPolygons(src_vertices_world, src_faces)
             # from each des_object vertex cast ray to viewport and check hit with src_bvh_tree
             cls._deselect_all(obj=dest_object)
-            for co, link_faces_ids in dest_vertices_co:
-                hit = src_bvh_tree.ray_cast(co, viewport_view_direction)
-                if hit[0] is not None:
-                    for face_index in link_faces_ids:
+            if raycast_mode == 'AREA_OR':
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                for face_index, vertex_cos in dest_vertices_co:
+                    # only if raycasts from all vertices was success
+                    if (None, None, None, None) not in (src_bvh_tree.ray_cast(co, viewport_view_direction) for co in vertex_cos):
                         face = dest_object.data.polygons[face_index]
                         # only for face side of dest_object
                         if viewport_view_direction.dot(face.normal) >= 0.0:
                             face.select = True
+            else:
+                # format: [(vertex.co, (face.index, face.index, ...)), ...]
+                for co, link_faces_ids in dest_vertices_co:
+                    hit = src_bvh_tree.ray_cast(co, viewport_view_direction)
+                    if hit[0] is not None:
+                        for face_index in link_faces_ids:
+                            face = dest_object.data.polygons[face_index]
+                            # only for face side of dest_object
+                            if viewport_view_direction.dot(face.normal) >= 0.0:
+                                face.select = True
             # return mode back
             bpy.ops.object.mode_set(mode=mode)
 
@@ -173,8 +204,8 @@ class KnifeImprint:
             icon='MOD_BEVEL'
         )
         op.raycast_mode = context.scene.knifeimprint_prop_selection_mode
-        row = layout.row()
-        row.prop(
+        col = layout.column()
+        col.prop(
             data=context.scene,
             property='knifeimprint_prop_selection_mode',
             expand=True
@@ -192,7 +223,9 @@ class KnifeImpring_OT_selection_project(Operator):
         name='Selection Mode',
         items=[
             ('AREA', 'AREA', 'AREA', '', 0),
-            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1)
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1),
+            ('AREA_OR', 'AREA OR', 'AREA OR', '', 2),
+            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3)
         ],
         default='AREA'
     )
@@ -248,7 +281,9 @@ def register(ui=True):
         name='Selection Mode',
         items=[
             ('AREA', 'AREA', 'AREA', '', 0),
-            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1)
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1),
+            ('AREA_OR', 'AREA OR', 'AREA OR', '', 2),
+            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3)
         ],
         default='AREA'
     )

@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.1.1.
+1.1.2.
 
 Blender version
 -
@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+
+1.1.2
+- Added "AREA+FACEDOT" and "AREA OR" options for raycast modes list
 
 1.1.1
 - Added "raycast mode" option for "Selection Project"
