@@ -7,7 +7,7 @@
 import bmesh
 import bpy
 from bpy_extras.view3d_utils import region_2d_to_vector_3d
-from bpy.props import EnumProperty
+from bpy.props import FloatProperty, IntProperty, EnumProperty
 from bpy.types import Operator, Panel, Scene
 from bpy.utils import register_class, unregister_class
 from mathutils import Vector
@@ -17,7 +17,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 1, 2),
+    "version": (1, 1, 4),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -31,12 +31,19 @@ bl_info = {
 class KnifeImprint:
 
     @classmethod
-    def selection_project(cls, context, dest_object, src_object, raycast_mode='AREA'):
+    def selection_project(cls, context, dest_object, src_object, raycast_mode='AREA', bvh_epsilon=0.0,
+                          hybrid_threshold=1):
         # make selected polygons on the dest_object by visible overlap of polygons from src_object
         # raycast_mode = 'AREA' - raycast from all face vertices (select face if even one hits)
         #               'FACEDOT' - raycast from face center
         #               'AREA_OR' - raycast from all vertices (select face if all hits)
-        #               'AREA_FACEDOT' - raycast from all face vertices and from face center
+        #               'AREA_FACEDOT' - raycast from all face vertices and from face center (select face if even one hits)
+        #               'HYBRID' - process n-gons like AREA, triangles and quads like FACEDOT
+        #               'HYBRID+' - process like HYBRID but select face (for ngons) only if hybrid_threshold vertices or more are hit
+        #               'HYBRID-' - process like HYBRID but not select face (for ngons) if more than hybrid_threshold vertices are not hit
+        #               'VERTEX_SELECT' - raycast and select only vertices
+        # bvh_epsilon - epsilon threshold for BVH tree
+        # hybrid_threshold - how many vertices include/exclude for detecting select face or not
         if src_object and dest_object:
             # ray_cast from each vertex of dest_object along the viewport direction vector to check
             #   intersections with src_object
@@ -71,6 +78,21 @@ class KnifeImprint:
                     for face in bm.faces
                 ]
                 dest_vertices_co = dest_vertices_area + dest_vertices_facedot
+            elif raycast_mode in {'HYBRID', 'HYBRID+', 'HYBRID-'}:
+                # 'HYBRID'
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                # n-gons will process by all vertices
+                dest_vertices_ngons = [(face.index, tuple(dest_world_matrix * vertex.co for vertex in face.verts))
+                                    for face in bm.faces if len(face.verts) > 4]
+                # tris and quads will process only by center (facedot)
+                dest_vertices_tris_quads = [
+                    (face.index, (Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts])),))
+                    for face in bm.faces if len(face.verts) <= 4]
+                dest_vertices_co = dest_vertices_ngons + dest_vertices_tris_quads
+            elif raycast_mode == 'VERTEX_SELECT':
+                # 'VERTEX SELECT'
+                # format: ((vertex.index, vertex.co), ...)
+                dest_vertices_co = [(vertex.index, dest_world_matrix * vertex.co) for vertex in bm.verts]
             else:
                 # 'FACEDOT'
                 # format: [(vertex.co, (face.index, face.index, ...)), ...]
@@ -92,18 +114,68 @@ class KnifeImprint:
             src_world_matrix = src_object.matrix_world.copy()
             src_vertices_world = [src_world_matrix * vertex.co for vertex in src_object.data.vertices]
             src_faces = [polygon.vertices for polygon in src_object.data.polygons]
-            src_bvh_tree = BVHTree.FromPolygons(src_vertices_world, src_faces)
+            src_bvh_tree = BVHTree.FromPolygons(src_vertices_world, src_faces, all_triangles=False, epsilon=bvh_epsilon)
             # from each des_object vertex cast ray to viewport and check hit with src_bvh_tree
             cls._deselect_all(obj=dest_object)
             if raycast_mode == 'AREA_OR':
                 # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
                 for face_index, vertex_cos in dest_vertices_co:
-                    # only if raycasts from all vertices was success
+                    # only if raycasts from all vertices were success
                     if (None, None, None, None) not in (src_bvh_tree.ray_cast(co, viewport_view_direction) for co in vertex_cos):
                         face = dest_object.data.polygons[face_index]
                         # only for face side of dest_object
                         if viewport_view_direction.dot(face.normal) >= 0.0:
                             face.select = True
+            elif raycast_mode == 'HYBRID':
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                for face_index, vertex_cos in dest_vertices_co:
+                    # if raycasts from any vertex was success
+                    for co in vertex_cos:
+                        hit = src_bvh_tree.ray_cast(co, viewport_view_direction)
+                        if hit[0] is not None:
+                            face = dest_object.data.polygons[face_index]
+                            # only for face side of dest_object
+                            if viewport_view_direction.dot(face.normal) >= 0.0:
+                                face.select = True
+                            continue
+            elif raycast_mode == 'HYBRID+':
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                for face_index, vertex_cos in dest_vertices_co:
+                    face = dest_object.data.polygons[face_index]
+                    # only for face side of dest_object
+                    if viewport_view_direction.dot(face.normal) >= 0.0:
+                        raycasts = tuple(src_bvh_tree.ray_cast(co, viewport_view_direction) for co in vertex_cos)
+                        hits_amount = len(raycasts) - raycasts.count((None, None, None, None))
+                        if len(face.vertices) > 4:
+                            # ngon
+                            if hits_amount >= hybrid_threshold:
+                                face.select = True
+                        else:
+                            # tris/quad
+                            if raycasts[0][0] is not None:
+                                face.select = True
+            elif raycast_mode == 'HYBRID-':
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                for face_index, vertex_cos in dest_vertices_co:
+                    face = dest_object.data.polygons[face_index]
+                    # only for face side of dest_object
+                    if viewport_view_direction.dot(face.normal) >= 0.0:
+                        raycasts = tuple(src_bvh_tree.ray_cast(co, viewport_view_direction) for co in vertex_cos)
+                        hits_amount = len(raycasts) - raycasts.count((None, None, None, None))
+                        if len(face.vertices) > 4:
+                            # ngon
+                            if hits_amount >= len(face.vertices) - hybrid_threshold:
+                                face.select = True
+                        else:
+                            # tris/quad
+                            if raycasts[0][0] is not None:
+                                face.select = True
+            elif raycast_mode == 'VERTEX_SELECT':
+                # format: ((vertex.index, vertex.co), ...)
+                for index, co in dest_vertices_co:
+                    hit = src_bvh_tree.ray_cast(co, viewport_view_direction)
+                    if hit[0] is not None:
+                        dest_object.data.vertices[index].select = True
             else:
                 # format: [(vertex.co, (face.index, face.index, ...)), ...]
                 for co, link_faces_ids in dest_vertices_co:
@@ -204,11 +276,23 @@ class KnifeImprint:
             icon='MOD_BEVEL'
         )
         op.raycast_mode = context.scene.knifeimprint_prop_selection_mode
+        op.bvh_epsilon = context.scene.knifeimprint_prop_bvh_epsilon
+        op.hybrid_threshold = context.scene.knifeimprint_prop_hybrid_threshold
         col = layout.column()
         col.prop(
             data=context.scene,
             property='knifeimprint_prop_selection_mode',
             expand=True
+        )
+        layout.prop(
+            data=context.scene,
+            property='knifeimprint_prop_bvh_epsilon',
+            text='Raycast threshold'
+        )
+        layout.prop(
+            data=context.scene,
+            property='knifeimprint_prop_hybrid_threshold',
+            text='Hybrid threshold'
         )
 
 
@@ -225,9 +309,24 @@ class KnifeImpring_OT_selection_project(Operator):
             ('AREA', 'AREA', 'AREA', '', 0),
             ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1),
             ('AREA_OR', 'AREA OR', 'AREA OR', '', 2),
-            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3)
+            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3),
+            ('HYBRID', 'HYBRID', 'HYBRID', '', 4),
+            ('VERTEX_SELECT', 'VERTEX SELECT', 'VERTEX SELECT', '', 5),
+            ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
+            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7)
         ],
         default='AREA'
+    )
+
+    bvh_epsilon = FloatProperty(
+        name='bvh_epsilon',
+        default=0.0
+    )
+
+    hybrid_threshold = IntProperty(
+        name='Hybrid threshold',
+        default=1,
+        min=1
     )
 
     def execute(self, context):
@@ -238,7 +337,9 @@ class KnifeImpring_OT_selection_project(Operator):
             context=context,
             dest_object=context.active_object,
             src_object=selected_object,
-            raycast_mode=self.raycast_mode
+            raycast_mode=self.raycast_mode,
+            bvh_epsilon=self.bvh_epsilon,
+            hybrid_threshold=self.hybrid_threshold
         )
         return {'FINISHED'}
 
@@ -283,9 +384,22 @@ def register(ui=True):
             ('AREA', 'AREA', 'AREA', '', 0),
             ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 1),
             ('AREA_OR', 'AREA OR', 'AREA OR', '', 2),
-            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3)
+            ('AREA_FACEDOT', 'AREA + FACEDOT', 'AREA + FACEDOT', '', 3),
+            ('HYBRID', 'HYBRID', 'HYBRID', '', 4),
+            ('VERTEX_SELECT', 'VERTEX SELECT', 'VERTEX SELECT', '', 5),
+            ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
+            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7)
         ],
         default='AREA'
+    )
+    Scene.knifeimprint_prop_bvh_epsilon = FloatProperty(
+        name='bvh_epsilon',
+        default=0.0
+    )
+    Scene.knifeimprint_prop_hybrid_threshold = IntProperty(
+        name='Hybrid threshold',
+        default=1,
+        min=1
     )
     register_class(KnifeImpring_OT_knife_imprint)
     register_class(KnifeImpring_OT_selection_project)
@@ -298,6 +412,9 @@ def unregister(ui=True):
         unregister_class(KnifeImprint_PT_panel)
     unregister_class(KnifeImpring_OT_selection_project)
     unregister_class(KnifeImpring_OT_knife_imprint)
+    del Scene.knifeimprint_prop_hybrid_threshold
+    del Scene.knifeimprint_prop_bvh_epsilon
+    del Scene.knifeimprint_prop_selection_mode
 
 
 if __name__ == "__main__":

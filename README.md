@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.1.2.
+1.1.4.
 
 Blender version
 -
@@ -18,6 +18,14 @@ Blender version
 
 Version history
 -
+
+1.1.4
+- Added "HYBRID+", "HYBRID-" options for raycast modes list
+- Added hybryd threshold for "HYBRID+/-" modes
+
+1.1.3
+- Added "HYBRID" and "VERTEX SELECT" options for raycast modes list
+- Added threshold for raycast
 
 1.1.2
 - Added "AREA+FACEDOT" and "AREA OR" options for raycast modes list
