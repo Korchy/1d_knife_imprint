@@ -42,6 +42,9 @@ class KnifeImprint:
         #               'HYBRID+' - process like HYBRID but select face (for ngons) only if hybrid_threshold vertices or more are hit
         #               'HYBRID-' - process like HYBRID but not select face (for ngons) if more than hybrid_threshold vertices are not hit
         #               'VERTEX_SELECT' - raycast and select only vertices
+        #               'TRIANGLE_ALL', 'TRIANGLE_ANY' - virtually triangulate mesh, raycast from face center of each tris
+        #                   ALL - select parent face if all hit
+        #                   ANY - select parent face if at least one hit
         # bvh_epsilon - epsilon threshold for BVH tree
         # hybrid_threshold - how many vertices include/exclude for detecting select face or not
         if src_object and dest_object:
@@ -93,6 +96,30 @@ class KnifeImprint:
                 # 'VERTEX SELECT'
                 # format: ((vertex.index, vertex.co), ...)
                 dest_vertices_co = [(vertex.index, dest_world_matrix * vertex.co) for vertex in bm.verts]
+            elif raycast_mode in {'TRIANGLE_ALL', 'TRIANGLE_ANY'}:
+                # 'TRIANGLE'
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                # try to triangulate mesh, get face center of each triangle to use it as a raycast point
+                # create a copy to save face indices (triangulation will replace current geometry)
+                bm_copy = bm.copy()
+                # triangulate
+                triangulation = bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method=0, ngon_method=0)
+                # triangulation['face_map'].items() -> a list of pairs [(tris, source face), (tris, source face), ...]
+                dest_vertices_co = [
+                    (
+                    face.index, tuple(Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in tris_face[0].verts]))
+                                      for tris_face in triangulation['face_map'].items()
+                                      if tris_face[1].index == face.index)
+                    ) for face in bm_copy.faces
+                ]
+                # tris don't add to face_map - ?
+                #   so, we have some empty co if face was the tris [..., (face.index, ()), ...]
+                #   remove them and replace with correct data from bmesh copy
+                dest_vertices_co = [_e for _e in dest_vertices_co if _e[1] != ()]
+                dest_vertices_tris = [
+                    (face.index, (Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts])),))
+                    for face in bm_copy.faces if len(face.verts) <= 3]
+                dest_vertices_co += dest_vertices_tris
             else:
                 # 'FACEDOT'
                 # format: [(vertex.co, (face.index, face.index, ...)), ...]
@@ -176,6 +203,18 @@ class KnifeImprint:
                     hit = src_bvh_tree.ray_cast(co, viewport_view_direction)
                     if hit[0] is not None:
                         dest_object.data.vertices[index].select = True
+            elif raycast_mode in {'TRIANGLE_ALL', 'TRIANGLE_ANY'}:
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                for face_index, vertex_cos in dest_vertices_co:
+                    face = dest_object.data.polygons[face_index]
+                    # only for face side of dest_object
+                    if viewport_view_direction.dot(face.normal) >= 0.0:
+                        raycasts = tuple(src_bvh_tree.ray_cast(co, viewport_view_direction) for co in vertex_cos)
+                        misses = raycasts.count((None, None, None, None))
+                        if raycast_mode == 'TRIANGLE_ALL' and misses == 0:
+                            face.select = True
+                        elif raycast_mode == 'TRIANGLE_ANY' and misses < len(raycasts):
+                            face.select = True
             else:
                 # format: [(vertex.co, (face.index, face.index, ...)), ...]
                 for co, link_faces_ids in dest_vertices_co:
@@ -313,7 +352,9 @@ class KnifeImpring_OT_selection_project(Operator):
             ('HYBRID', 'HYBRID', 'HYBRID', '', 4),
             ('VERTEX_SELECT', 'VERTEX SELECT', 'VERTEX SELECT', '', 5),
             ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
-            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7)
+            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7),
+            ('TRIANGLE_ALL', 'TRIANGLE ALL', 'TRIANGLE ALL', '', 8),
+            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'TRIANGLE_ANY', '', 9)
         ],
         default='AREA'
     )
@@ -388,7 +429,9 @@ def register(ui=True):
             ('HYBRID', 'HYBRID', 'HYBRID', '', 4),
             ('VERTEX_SELECT', 'VERTEX SELECT', 'VERTEX SELECT', '', 5),
             ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
-            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7)
+            ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7),
+            ('TRIANGLE_ALL', 'TRIANGLE ALL', 'TRIANGLE ALL', '', 8),
+            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'TRIANGLE_ANY', '', 9)
         ],
         default='AREA'
     )

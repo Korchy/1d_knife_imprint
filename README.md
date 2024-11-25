@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.1.4.
+1.1.5.
 
 Blender version
 -
@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+
+1.1.5
+- Added "TRIANGLE_ALL", "TRIANGLE_ANY" options for raycast modes list
 
 1.1.4
 - Added "HYBRID+", "HYBRID-" options for raycast modes list
