@@ -125,8 +125,10 @@ class KnifeImprint:
                 # find nearest vertices on dest_object by projecting geometry to XY
                 dest_v0 = kd.find(co=Vector((src_v0.x, src_v0.y, 0.0)))
                 dest_v1 = kd.find(co=Vector((src_v1.x, src_v1.y, 0.0)))
+                # print('dest_v0', dest_v0, threshold_r)
+                # print('dest_v1', dest_v1, threshold_r)
                 # if two founded vertices less threshold_r by distance
-                if dest_v1[2] < threshold_r and dest_v0[2] < threshold_r:
+                if (dest_v1[2] < threshold_r) and (dest_v0[2] < threshold_r):
                     # try to get the shortest_path between them
                     # check if this is the single edge, this needs because bpy.ops.mesh.shortest_path_select() drops
                     #   selection if two vertices of one edge are selected
@@ -135,6 +137,9 @@ class KnifeImprint:
                     if single_edge:
                         # add this edge to future selection by length compare
                         # if isclose(cls._edge_xy_length(edge=single_edge), src_edge_length, rel_tol=threshold):
+                        # print('edge lenght', cls._edge_xy_length(edge=single_edge))
+                        # print('template edge lenght', src_edge_length)
+                        # print('diff', cls._edge_xy_length(edge=single_edge) - src_edge_length, 'threshold', threshold_d)
                         if abs(cls._edge_xy_length(edge=single_edge) - src_edge_length) <= threshold_d:
                             edges_to_select += [single_edge.index,]
                     else:
@@ -658,10 +663,11 @@ class KnifeImprint:
         )
         # Selection Project Verts
         box = layout.box()
-        box.operator(
+        op = box.operator(
             operator='knifeimprint.selection_project_verts',
             icon='MOD_MESHDEFORM'
         )
+        op.threshold_r = context.scene.knifeimprint_prop_selection_verts_r_threshold
         box.prop(
             data=context.scene,
             property='knifeimprint_prop_selection_verts_r_threshold',
@@ -679,7 +685,7 @@ class KnifeImpring_OT_selection_project_verts(Operator):
 
     threshold_r = FloatProperty(
         name='Radius Threshold',
-        default=0.001
+        default=0.05
     )
 
     def execute(self, context):
@@ -701,12 +707,12 @@ class KnifeImpring_OT_selection_project_edges(Operator):
 
     threshold_d = FloatProperty(
         name='Distance Threshold',
-        default=0.001
+        default=0.2
     )
 
     threshold_r = FloatProperty(
         name='Radius Threshold',
-        default=0.001
+        default=0.21
     )
 
     def execute(self, context):
@@ -831,15 +837,15 @@ def register(ui=True):
     )
     Scene.knifeimprint_prop_selection_edges_d_threshold = FloatProperty(
         name='Selection Edges Distance Threshold',
-        default=0.03
+        default=0.2
     )
     Scene.knifeimprint_prop_selection_edges_r_threshold = FloatProperty(
         name='Selection Edges Radius Threshold',
-        default=0.001
+        default=0.21
     )
     Scene.knifeimprint_prop_selection_verts_r_threshold = FloatProperty(
         name='Selection Verts Radius Threshold',
-        default=0.001
+        default=0.05
     )
     register_class(KnifeImpring_OT_knife_imprint)
     register_class(KnifeImpring_OT_selection_project)
