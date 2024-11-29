@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -33,10 +33,10 @@ bl_info = {
 class KnifeImprint:
 
     @classmethod
-    def selection_project_verts(cls, context, dest_object, src_object):
+    def selection_project_verts(cls, context, dest_object, src_object, threshold_r):
         # make vertices on dest_object selected by vertices on src_object
         #   project all vertices to XY plane, for each src_object's vertex find nearest dest_object's vertex
-        #   and select it
+        #   if it is in radius threshold (threshold_r) - select it
         if src_object and dest_object:
             # current mode
             mode = dest_object.mode
@@ -67,8 +67,10 @@ class KnifeImprint:
             src_verts = [src_world_matrix * _vertex.co for _vertex in bm_src.verts]
             for vertex in src_verts:
                 dest_vertex = kd.find(co=Vector((vertex.x, vertex.y, 0.0)))
+                distance = dest_vertex[2]
                 dest_vertex_index = dest_vertex[1]
-                bm_dest.verts[dest_vertex_index].select = True
+                if distance < threshold_r:
+                    bm_dest.verts[dest_vertex_index].select = True
             # save changed data to mesh
             bm_dest.to_mesh(dest_object.data)
             bm_dest.free()
@@ -77,11 +79,12 @@ class KnifeImprint:
             bpy.ops.object.mode_set(mode=mode)
 
     @classmethod
-    def selection_project_edge(cls, context, dest_object, src_object, threshold=0.001):
+    def selection_project_edge(cls, context, dest_object, src_object, threshold_d=0.001, threshold_r=0.001):
         # make edges on dest_object selected by edges on src_object
-        #   for each src_object's edges, find the nearest edge vertices on dest_object by XY projection
-        #   find the shortest path between them, count it length and compare with src_object's edge length
-        #   if equal - add this edges to selection
+        #   for each src_object's edges, project its vertices on XY projection, find the nearest vertices
+        #   on dest_object projection to XY, check radius threshold (threshold_r) if less - find the
+        #   shortest path between them, count it length and compare with src_object's edge length
+        #   if equal (by threshold_d) - add this edges to selection
         if src_object and dest_object:
             # current mode
             mode = dest_object.mode
@@ -122,36 +125,38 @@ class KnifeImprint:
                 # find nearest vertices on dest_object by projecting geometry to XY
                 dest_v0 = kd.find(co=Vector((src_v0.x, src_v0.y, 0.0)))
                 dest_v1 = kd.find(co=Vector((src_v1.x, src_v1.y, 0.0)))
-                # try to get the shortest_path between them
-                # check if this is the single edge, this needs because bpy.ops.mesh.shortest_path_select() drops
-                #   selection if two vertices of one edge are selected
-                single_edge = next((_edge for _edge in bm_dest.edges if
-                                    {_edge.verts[0].index, _edge.verts[1].index} == {dest_v0[1], dest_v1[1]} ), None)
-                if single_edge:
-                    # add this edge to future selection by length compare
-                    # if isclose(cls._edge_xy_length(edge=single_edge), src_edge_length, rel_tol=threshold):
-                    if abs(cls._edge_xy_length(edge=single_edge) - src_edge_length) <= threshold:
-                        edges_to_select += [single_edge.index,]
-                else:
-                    # select two founded vertices on dest_object
-                    cls._deselect_all(obj=dest_object)
-                    dest_object.data.vertices[dest_v0[1]].select = True
-                    dest_object.data.vertices[dest_v1[1]].select = True
-                    bpy.ops.object.mode_set(mode='EDIT')
-                    context.tool_settings.mesh_select_mode = (True, False, False)   # require fo shortest_path_select
-                    bpy.ops.mesh.shortest_path_select()
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                    # get selected edges
-                    shortest_path_selected_edges = [_edge.index for _edge in dest_object.data.edges if _edge.select]
-                    # get selected edges in bm_dest for calc their length
-                    bm_dest_selected_edges = [_edge for _edge in bm_dest.edges
-                                              if _edge.index in shortest_path_selected_edges]
-                    # get sum of their length
-                    shortest_path_length = sum(map(cls._edge_xy_length, bm_dest_selected_edges))
-                    # add to future selection by compare length
-                    # if isclose(shortest_path_length, src_edge_length, abs_tol=threshold):
-                    if abs(shortest_path_length - src_edge_length) <= threshold:
-                        edges_to_select += shortest_path_selected_edges
+                # if two founded vertices less threshold_r by distance
+                if dest_v1[2] < threshold_r and dest_v0[2] < threshold_r:
+                    # try to get the shortest_path between them
+                    # check if this is the single edge, this needs because bpy.ops.mesh.shortest_path_select() drops
+                    #   selection if two vertices of one edge are selected
+                    single_edge = next((_edge for _edge in bm_dest.edges if
+                                        {_edge.verts[0].index, _edge.verts[1].index} == {dest_v0[1], dest_v1[1]} ), None)
+                    if single_edge:
+                        # add this edge to future selection by length compare
+                        # if isclose(cls._edge_xy_length(edge=single_edge), src_edge_length, rel_tol=threshold):
+                        if abs(cls._edge_xy_length(edge=single_edge) - src_edge_length) <= threshold_d:
+                            edges_to_select += [single_edge.index,]
+                    else:
+                        # select two founded vertices on dest_object
+                        cls._deselect_all(obj=dest_object)
+                        dest_object.data.vertices[dest_v0[1]].select = True
+                        dest_object.data.vertices[dest_v1[1]].select = True
+                        bpy.ops.object.mode_set(mode='EDIT')
+                        context.tool_settings.mesh_select_mode = (True, False, False)   # require fo shortest_path_select
+                        bpy.ops.mesh.shortest_path_select()
+                        bpy.ops.object.mode_set(mode='OBJECT')
+                        # get selected edges
+                        shortest_path_selected_edges = [_edge.index for _edge in dest_object.data.edges if _edge.select]
+                        # get selected edges in bm_dest for calc their length
+                        bm_dest_selected_edges = [_edge for _edge in bm_dest.edges
+                                                  if _edge.index in shortest_path_selected_edges]
+                        # get sum of their length
+                        shortest_path_length = sum(map(cls._edge_xy_length, bm_dest_selected_edges))
+                        # add to future selection by compare length
+                        # if isclose(shortest_path_length, src_edge_length, abs_tol=threshold):
+                        if abs(shortest_path_length - src_edge_length) <= threshold_d:
+                            edges_to_select += shortest_path_selected_edges
             # select all previously saved edges
             bpy.ops.object.mode_set(mode='OBJECT')
             cls._deselect_all(obj=dest_object)
@@ -639,16 +644,28 @@ class KnifeImprint:
             operator='knifeimprint.selection_project_edges',
             icon='MOD_LATTICE'
         )
-        op.threshold = context.scene.knifeimprint_prop_selection_edges_threshold
+        op.threshold_d = context.scene.knifeimprint_prop_selection_edges_d_threshold
+        op.threshold_r = context.scene.knifeimprint_prop_selection_edges_r_threshold
         box.prop(
             data=context.scene,
-            property='knifeimprint_prop_selection_edges_threshold',
-            text='Threshold'
+            property='knifeimprint_prop_selection_edges_d_threshold',
+            text='Distance Threshold'
+        )
+        box.prop(
+            data=context.scene,
+            property='knifeimprint_prop_selection_edges_r_threshold',
+            text='Radius Threshold'
         )
         # Selection Project Verts
-        layout.operator(
+        box = layout.box()
+        box.operator(
             operator='knifeimprint.selection_project_verts',
             icon='MOD_MESHDEFORM'
+        )
+        box.prop(
+            data=context.scene,
+            property='knifeimprint_prop_selection_verts_r_threshold',
+            text='Radius Threshold'
         )
 
 
@@ -660,6 +677,11 @@ class KnifeImpring_OT_selection_project_verts(Operator):
     bl_label = 'Selection Verts'
     bl_options = {'REGISTER', 'UNDO'}
 
+    threshold_r = FloatProperty(
+        name='Radius Threshold',
+        default=0.001
+    )
+
     def execute(self, context):
         selected_object = context.selected_objects[:]
         selected_object.remove(context.active_object)
@@ -667,7 +689,8 @@ class KnifeImpring_OT_selection_project_verts(Operator):
         KnifeImprint.selection_project_verts(
             context=context,
             dest_object=context.active_object,
-            src_object=selected_object
+            src_object=selected_object,
+            threshold_r=self.threshold_r
         )
         return {'FINISHED'}
 
@@ -676,8 +699,13 @@ class KnifeImpring_OT_selection_project_edges(Operator):
     bl_label = 'Selection Edges'
     bl_options = {'REGISTER', 'UNDO'}
 
-    threshold = FloatProperty(
-        name='Selection Edges Threshold',
+    threshold_d = FloatProperty(
+        name='Distance Threshold',
+        default=0.001
+    )
+
+    threshold_r = FloatProperty(
+        name='Radius Threshold',
         default=0.001
     )
 
@@ -689,7 +717,8 @@ class KnifeImpring_OT_selection_project_edges(Operator):
             context=context,
             dest_object=context.active_object,
             src_object=selected_object,
-            threshold=self.threshold
+            threshold_d=self.threshold_d,
+            threshold_r=self.threshold_r
         )
         return {'FINISHED'}
 
@@ -800,9 +829,17 @@ def register(ui=True):
         default=1,
         min=1
     )
-    Scene.knifeimprint_prop_selection_edges_threshold = FloatProperty(
-        name='Selection Edges Threshold',
+    Scene.knifeimprint_prop_selection_edges_d_threshold = FloatProperty(
+        name='Selection Edges Distance Threshold',
         default=0.03
+    )
+    Scene.knifeimprint_prop_selection_edges_r_threshold = FloatProperty(
+        name='Selection Edges Radius Threshold',
+        default=0.001
+    )
+    Scene.knifeimprint_prop_selection_verts_r_threshold = FloatProperty(
+        name='Selection Verts Radius Threshold',
+        default=0.001
     )
     register_class(KnifeImpring_OT_knife_imprint)
     register_class(KnifeImpring_OT_selection_project)
@@ -819,7 +856,9 @@ def unregister(ui=True):
     unregister_class(KnifeImpring_OT_selection_project_edges)
     unregister_class(KnifeImpring_OT_selection_project)
     unregister_class(KnifeImpring_OT_knife_imprint)
-    del Scene.knifeimprint_prop_selection_edges_threshold
+    del Scene.knifeimprint_prop_selection_verts_r_threshold
+    del Scene.knifeimprint_prop_selection_edges_d_threshold
+    del Scene.knifeimprint_prop_selection_edges_r_threshold
     del Scene.knifeimprint_prop_hybrid_threshold
     del Scene.knifeimprint_prop_bvh_epsilon
     del Scene.knifeimprint_prop_selection_mode

@@ -19,6 +19,9 @@ Blender version
 Version history
 -
 
+1.3.1
+- Added radius threshold for "Edge Selection" and "Vertex Selection"
+
 1.3.0
 - Added the "Vertex Selection" function - selects all vertices projected from the source object to the dest object.
 
