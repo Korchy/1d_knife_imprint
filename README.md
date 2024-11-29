@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.1.5.
+1.3.0.
 
 Blender version
 -
@@ -18,6 +18,19 @@ Blender version
 
 Version history
 -
+
+1.3.0
+- Added the "Vertex Selection" function - selects all vertices projected from the source object to the dest object.
+
+1.2.1
+- The "Edge Selection" function replaced with new algorithm
+
+1.2.0
+- Added "Edge Selection" function
+
+1.1.6
+- Speed improving for "TRIANGLE" modes.
+- Switch to "Face" selection mode
 
 1.1.5
 - Added "TRIANGLE_ALL", "TRIANGLE_ANY" options for raycast modes list
