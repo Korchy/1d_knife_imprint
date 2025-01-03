@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 3, 1),
+    "version": (1, 4, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -75,6 +75,100 @@ class KnifeImprint:
             bm_dest.to_mesh(dest_object.data)
             bm_dest.free()
             bm_src.free()
+            # return mode back
+            bpy.ops.object.mode_set(mode=mode)
+
+    @classmethod
+    def selection_project_edge_triangle_any(cls, context, dest_object, src_object, bvh_epsilon=0.0):
+        # make edges on dest_object selected by edges on src_object
+        #   this variant works same as knife imprint with 'TRIANGLE ANY' mode
+        #   virtually triangulating dest object, raycast to src object, as a result we will have to linked
+        #   lists: polygons on dest object - polygons on src object, next - select border edges on dest object polygons
+        if src_object and dest_object:
+            # current mode
+            mode = dest_object.mode
+            if dest_object.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            # deselect all
+            cls._deselect_all(obj=dest_object)
+            # bm dest object
+            dest_world_matrix = dest_object.matrix_world.copy()
+            bm = bmesh.new()
+            bm.from_mesh(dest_object.data)
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            # try to triangulate mesh, get face center of each triangle to use it as a raycast point
+            # create a copy to save face indices (triangulation will replace current geometry)
+            bm_copy = bm.copy()
+            # triangulate
+            triangulation = bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method=0, ngon_method=0)
+            # triangulation['face_map'] -> dict {tris: source_face, tris: source_face, ...}
+            # triangulation['face_map'].items() -> a list of pairs [(tris, source face), (tris, source face), ...]
+            # invert face mapping to get format like: {source_face: [tris, tris,...], ...}
+            inv_map = {}
+            for k, v in triangulation['face_map'].items():
+                inv_map[v] = inv_map.get(v, []) + [k]
+            # get vertices from inverted map
+            dest_vertices_co = [
+                (source_face.index, tuple(cls._face_center(tuple(dest_world_matrix * vert.co for vert in tris.verts))
+                                  for tris in trises))
+                for source_face, trises in inv_map.items()
+            ]
+            # tris wasn't add to face_map - why?
+            #   add them from bmesh copy
+            dest_vertices_tris = [
+                (face.index, (Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts])),))
+                for face in bm_copy.faces if len(face.verts) <= 3]
+            dest_vertices_co += dest_vertices_tris
+            # now we have the following format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+            # viewport direction vector
+            region = next((_region for _region in context.area.regions if _region.type == 'WINDOW'), None)
+            region_3d = context.area.spaces[0].region_3d
+            viewport_view_direction = region_2d_to_vector_3d(
+                region,
+                region_3d,
+                coord=(region.width / 2.0, region.height / 2.0)
+            )
+            viewport_view_direction.negate()    # from dest_object geometry to viewport
+            # create BVH tree for src object
+            src_world_matrix = src_object.matrix_world.copy()
+            src_vertices_world = [src_world_matrix * vertex.co for vertex in src_object.data.vertices]
+            src_faces = [polygon.vertices for polygon in src_object.data.polygons]
+            src_bvh_tree = BVHTree.FromPolygons(src_vertices_world, src_faces, all_triangles=False, epsilon=bvh_epsilon)
+            # from each dest_vertices_co vertex cast ray to viewport and check hit with src_bvh_tree
+            # dest_vertices_co: [(face.index, (vertex.co, vertex.co, ...)), ...]
+            # write to dict {src_face_index: [dest_face_index, dest_face_index, ...], ...}
+            src_dest_refers = {}
+            for dest_face_index, vertex_cos in dest_vertices_co:
+                dest_face = dest_object.data.polygons[dest_face_index]
+                # only for face side of dest_object
+                if viewport_view_direction.dot(dest_face.normal) >= 0.0:
+                    for co in vertex_cos:
+                        raycast = src_bvh_tree.ray_cast(co, viewport_view_direction)
+                        # raycast = (position, normal, index, distance)
+                        if raycast[2] is not None:
+                            src_dest_refers[raycast[2]] = src_dest_refers.get(raycast[2], []) + [dest_face_index]
+            # for each src-dest group of faces get only boundary edges and select them
+            cls._deselect_bm_all(bm=bm)
+            for src_face_index, dest_faces_indices in src_dest_refers.items():
+                dest_edges = [[edge for edge in face.edges] for face in bm_copy.faces if face.index in dest_faces_indices]
+                # convert from list with edges in nested lists to flat set with edges
+                dest_edges = set(cls._nested_lists_to_list(lst=dest_edges))
+                boundary_edges = [edge for edge in dest_edges
+                                  if len(edge.link_faces) >= 2
+                                  and not((edge.link_faces[0].index in dest_faces_indices)
+                                         and (edge.link_faces[1].index in dest_faces_indices))]
+                # select boundary edges
+                for edge in boundary_edges:
+                    edge.select = True
+            # copy selection from bm to original mesh
+            bm_copy.to_mesh(dest_object.data)
+            # clear bm objects
+            bm.free()
+            bm_copy.free()
+            # switch to edge selection mode
+            context.tool_settings.mesh_select_mode = (False, True, False)
             # return mode back
             bpy.ops.object.mode_set(mode=mode)
 
@@ -574,6 +668,11 @@ class KnifeImprint:
     #     # return isclose(dot, point_vector.length, abs_tol=0.01)
 
     @staticmethod
+    def _nested_lists_to_list(lst):
+        # convert list with nested lists to flat list
+        return [x for xs in lst for x in xs]
+
+    @staticmethod
     def _face_center(vertices):
         # returns the coordinates of the polygon center by coordinates if its vertexes
         # vertices format = ((0.1, 0.0, 1.0), (1.0, 0.0, 1.0), ...)
@@ -594,6 +693,16 @@ class KnifeImprint:
         for edge in obj.data.edges:
             edge.select = False
         for vertex in obj.data.vertices:
+            vertex.select = False
+
+    @staticmethod
+    def _deselect_bm_all(bm):
+        # remove all selection from edges and vertices in bmesh
+        for face in bm.faces:
+            face.select = False
+        for edge in bm.edges:
+            edge.select = False
+        for vertex in bm.verts:
             vertex.select = False
 
     @staticmethod
@@ -651,16 +760,24 @@ class KnifeImprint:
         )
         op.threshold_d = context.scene.knifeimprint_prop_selection_edges_d_threshold
         op.threshold_r = context.scene.knifeimprint_prop_selection_edges_r_threshold
+        op.bvh_epsilon = context.scene.knifeimprint_prop_bvh_epsilon
+        op.mode = context.scene.knifeimprint_prop_selection_edges_mode
         box.prop(
             data=context.scene,
-            property='knifeimprint_prop_selection_edges_d_threshold',
-            text='Distance Threshold'
+            property='knifeimprint_prop_selection_edges_mode',
+            expand=True
         )
-        box.prop(
-            data=context.scene,
-            property='knifeimprint_prop_selection_edges_r_threshold',
-            text='Radius Threshold'
-        )
+        if context.scene.knifeimprint_prop_selection_edges_mode == 'SHORTEST_PATH':
+            box.prop(
+                data=context.scene,
+                property='knifeimprint_prop_selection_edges_d_threshold',
+                text='Distance Threshold'
+            )
+            box.prop(
+                data=context.scene,
+                property='knifeimprint_prop_selection_edges_r_threshold',
+                text='Radius Threshold'
+            )
         # Selection Project Verts
         box = layout.box()
         op = box.operator(
@@ -715,17 +832,39 @@ class KnifeImpring_OT_selection_project_edges(Operator):
         default=0.21
     )
 
+    bvh_epsilon = FloatProperty(
+        name='bvh_epsilon',
+        default=0.0
+    )
+
+    mode = EnumProperty(
+        name='Selection Edges Mode',
+        items=[
+            ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1)
+        ],
+        default='TRIANGLE_ANY'
+    )
+
     def execute(self, context):
         selected_object = context.selected_objects[:]
         selected_object.remove(context.active_object)
         selected_object = selected_object[0] if selected_object else selected_object
-        KnifeImprint.selection_project_edge(
-            context=context,
-            dest_object=context.active_object,
-            src_object=selected_object,
-            threshold_d=self.threshold_d,
-            threshold_r=self.threshold_r
-        )
+        if self.mode == 'SHORTEST_PATH':
+            KnifeImprint.selection_project_edge(
+                context=context,
+                dest_object=context.active_object,
+                src_object=selected_object,
+                threshold_d=self.threshold_d,
+                threshold_r=self.threshold_r
+            )
+        elif self.mode == 'TRIANGLE_ANY':
+            KnifeImprint.selection_project_edge_triangle_any(
+                context=context,
+                dest_object=context.active_object,
+                src_object=selected_object,
+                bvh_epsilon=self.bvh_epsilon
+            )
         return {'FINISHED'}
 
 class KnifeImpring_OT_selection_project(Operator):
@@ -810,6 +949,14 @@ class KnifeImprint_PT_panel(Panel):
 # REGISTER
 
 def register(ui=True):
+    Scene.knifeimprint_prop_selection_edges_mode = EnumProperty(
+        name='Selection Edges Mode',
+        items=[
+            ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1)
+        ],
+        default='TRIANGLE_ANY'
+    )
     Scene.knifeimprint_prop_selection_mode = EnumProperty(
         name='Selection Mode',
         items=[
@@ -868,6 +1015,7 @@ def unregister(ui=True):
     del Scene.knifeimprint_prop_hybrid_threshold
     del Scene.knifeimprint_prop_bvh_epsilon
     del Scene.knifeimprint_prop_selection_mode
+    del Scene.knifeimprint_prop_selection_edges_mode
 
 
 if __name__ == "__main__":

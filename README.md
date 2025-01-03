@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.3.0.
+1.4.0.
 
 Blender version
 -
@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+
+1.4.0
+- Added the "TRIANGLE ANY" mode for "Edge Selection"
 
 1.3.1
 - Added radius threshold for "Edge Selection" and "Vertex Selection"
