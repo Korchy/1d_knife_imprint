@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 4, 0),
+    "version": (1, 5, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -71,6 +71,58 @@ class KnifeImprint:
                 dest_vertex_index = dest_vertex[1]
                 if distance < threshold_r:
                     bm_dest.verts[dest_vertex_index].select = True
+            # save changed data to mesh
+            bm_dest.to_mesh(dest_object.data)
+            bm_dest.free()
+            bm_src.free()
+            # return mode back
+            bpy.ops.object.mode_set(mode=mode)
+
+    @classmethod
+    def selection_project_edge_isolines(cls, context, dest_object, src_object, threshold_r):
+        # special case for selecting edges on dest object by isolines (edges) on src object
+        #   works the same way as selection_project_verts but for selecting edges
+        if src_object and dest_object:
+            # current mode
+            mode = dest_object.mode
+            if dest_object.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            # switch to edge selection mode
+            context.tool_settings.mesh_select_mode = (False, True, False)
+            # create KDTree for dest_object to quickly find nearest vertices
+            dest_world_matrix = dest_object.matrix_world.copy()
+            bm_dest = bmesh.new()
+            bm_dest.from_mesh(dest_object.data)
+            bm_dest.verts.ensure_lookup_table()
+            bm_dest.edges.ensure_lookup_table()
+            kd = kdtree.KDTree(len(dest_object.data.vertices))
+            for vertex in dest_object.data.vertices:
+                vertex_global = dest_world_matrix * vertex.co
+                kd.insert(Vector((vertex_global.x, vertex_global.y, 0.0)), vertex.index)  # in xy projection
+            kd.balance()
+            # deselect all bm_dest
+            cls._deselect_bm_all(bm=bm_dest)
+            # src_object's edges
+            src_world_matrix = src_object.matrix_world.copy()
+            bm_src = bmesh.new()
+            bm_src.from_mesh(src_object.data)
+            bm_src.verts.ensure_lookup_table()
+            bm_src.edges.ensure_lookup_table()
+            # get global co-s for each edge's vertices on src object
+            # ((co, co), (co, co), ...)
+            src_edge_verts_co = ((src_world_matrix * edge.verts[0].co, src_world_matrix * edge.verts[1].co)
+                                 for edge in bm_src.edges)
+            # for each src edge's vertices
+            for verts_pair in src_edge_verts_co:
+                # try to find edge with correspondence vertices on dest object
+                position0, index0, distance0 = kd.find(co=Vector((verts_pair[0].x, verts_pair[0].y, 0.0)))
+                position1, index1, distance1 = kd.find(co=Vector((verts_pair[1].x, verts_pair[1].y, 0.0)))
+                if distance0 < threshold_r and distance1 < threshold_r:
+                    # got two vertices on dest object - find the edge between them
+                    edge = next((edge for edge in bm_dest.verts[index0].link_edges
+                                 if edge.other_vert(bm_dest.verts[index0]).index == index1), None)
+                    if edge:
+                        edge.select = True
             # save changed data to mesh
             bm_dest.to_mesh(dest_object.data)
             bm_dest.free()
@@ -778,6 +830,12 @@ class KnifeImprint:
                 property='knifeimprint_prop_selection_edges_r_threshold',
                 text='Radius Threshold'
             )
+        elif context.scene.knifeimprint_prop_selection_edges_mode == 'ISOLINES':
+            box.prop(
+                data=context.scene,
+                property='knifeimprint_prop_selection_edges_r_threshold',
+                text='Radius Threshold'
+            )
         # Selection Project Verts
         box = layout.box()
         op = box.operator(
@@ -841,7 +899,8 @@ class KnifeImpring_OT_selection_project_edges(Operator):
         name='Selection Edges Mode',
         items=[
             ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
-            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1)
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1),
+            ('ISOLINES', 'ISOLINES', 'ISOLINES', '', 2)
         ],
         default='TRIANGLE_ANY'
     )
@@ -864,6 +923,13 @@ class KnifeImpring_OT_selection_project_edges(Operator):
                 dest_object=context.active_object,
                 src_object=selected_object,
                 bvh_epsilon=self.bvh_epsilon
+            )
+        elif self.mode == 'ISOLINES':
+            KnifeImprint.selection_project_edge_isolines(
+                context=context,
+                dest_object=context.active_object,
+                src_object=selected_object,
+                threshold_r=self.threshold_r
             )
         return {'FINISHED'}
 
@@ -953,7 +1019,8 @@ def register(ui=True):
         name='Selection Edges Mode',
         items=[
             ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
-            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1)
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1),
+            ('ISOLINES', 'ISOLINES', 'ISOLINES', '', 2)
         ],
         default='TRIANGLE_ANY'
     )

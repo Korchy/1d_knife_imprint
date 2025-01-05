@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.4.0.
+1.5.0.
 
 Blender version
 -
@@ -18,6 +18,9 @@ Blender version
 
 Version history
 -
+
+1.5.0
+- Added new "ISOLINES" mode for "Edge Selection". Processes special case for selecting isolines on the surface - select edges on the map object by edges on the template object.
 
 1.4.0
 - Added the "TRIANGLE ANY" mode for "Edge Selection"
