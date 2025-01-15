@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.5.0.
+1.5.1.
 
 Blender version
 -
@@ -18,6 +18,10 @@ Blender version
 
 Version history
 -
+
+1.5.1
+- Button renamed.
+- Added tooltips.
 
 1.5.0
 - Added new "ISOLINES" mode for "Edge Selection". Processes special case for selecting isolines on the surface - select edges on the map object by edges on the template object.

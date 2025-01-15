@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 5, 0),
+    "version": (1, 5, 1),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -778,7 +778,7 @@ class KnifeImprint:
             operator='knifeimprint.knife_imprint',
             icon='MOD_UVPROJECT'
         )
-        # Selection Project
+        # Face Project selection
         box = layout.box()
         op = box.operator(
             operator='knifeimprint.selection_project',
@@ -855,7 +855,8 @@ class KnifeImprint:
 
 class KnifeImpring_OT_selection_project_verts(Operator):
     bl_idname = 'knifeimprint.selection_project_verts'
-    bl_label = 'Selection Verts'
+    bl_label = 'Verts Selection'
+    bl_description = 'top projection, selects matching vertices'
     bl_options = {'REGISTER', 'UNDO'}
 
     threshold_r = FloatProperty(
@@ -877,7 +878,8 @@ class KnifeImpring_OT_selection_project_verts(Operator):
 
 class KnifeImpring_OT_selection_project_edges(Operator):
     bl_idname = 'knifeimprint.selection_project_edges'
-    bl_label = 'Selection Edges'
+    bl_label = 'Edges Selection'
+    bl_description = 'Select active object edges from passive object'
     bl_options = {'REGISTER', 'UNDO'}
 
     threshold_d = FloatProperty(
@@ -898,9 +900,9 @@ class KnifeImpring_OT_selection_project_edges(Operator):
     mode = EnumProperty(
         name='Selection Edges Mode',
         items=[
-            ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
-            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1),
-            ('ISOLINES', 'ISOLINES', 'ISOLINES', '', 2)
+            ('SHORTEST_PATH', 'SHORTEST PATH', 'top projection, selects vertices and guess shortest paths between them, slow', '', 0),
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'view projection, selects edges of passive objects faces boundaries', '', 1),
+            ('ISOLINES', 'ISOLINES', 'top projection, selects exactly matching edges', '', 2)
         ],
         default='TRIANGLE_ANY'
     )
@@ -935,7 +937,8 @@ class KnifeImpring_OT_selection_project_edges(Operator):
 
 class KnifeImpring_OT_selection_project(Operator):
     bl_idname = 'knifeimprint.selection_project'
-    bl_label = 'Selection Project'
+    bl_label = 'Face Project selection'
+    bl_description = 'Select faces by view projection, blocked by passive object polygons'
     bl_options = {'REGISTER', 'UNDO'}
 
     raycast_mode = EnumProperty(
@@ -950,7 +953,7 @@ class KnifeImpring_OT_selection_project(Operator):
             ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
             ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7),
             ('TRIANGLE_ALL', 'TRIANGLE ALL', 'TRIANGLE ALL', '', 8),
-            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'TRIANGLE_ANY', '', 9)
+            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'view projection, selects edges of passive objects faces boundaries', '', 9)
         ],
         default='TRIANGLE_ANY'
     )
@@ -1018,9 +1021,9 @@ def register(ui=True):
     Scene.knifeimprint_prop_selection_edges_mode = EnumProperty(
         name='Selection Edges Mode',
         items=[
-            ('SHORTEST_PATH', 'SHORTEST PATH', 'SHORTEST PATH', '', 0),
-            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'TRIANGLE ANY', '', 1),
-            ('ISOLINES', 'ISOLINES', 'ISOLINES', '', 2)
+            ('SHORTEST_PATH', 'SHORTEST PATH', 'top projection, selects vertices and guess shortest paths between them, slow', '', 0),
+            ('TRIANGLE_ANY', 'TRIANGLE ANY', 'view projection, selects edges of passive objects faces boundaries', '', 1),
+            ('ISOLINES', 'ISOLINES', 'top projection, selects exactly matching edges', '', 2)
         ],
         default='TRIANGLE_ANY'
     )
@@ -1036,7 +1039,7 @@ def register(ui=True):
             ('HYBRID-', 'HYBRID-', 'HYBRID-', '', 6),
             ('HYBRID+', 'HYBRID+', 'HYBRID+', '', 7),
             ('TRIANGLE_ALL', 'TRIANGLE ALL', 'TRIANGLE ALL', '', 8),
-            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'TRIANGLE_ANY', '', 9)
+            ('TRIANGLE_ANY', 'TRIANGLE_ANY', 'view projection, selects edges of passive objects faces boundaries', '', 9)
         ],
         default='TRIANGLE_ANY'
     )
@@ -1050,15 +1053,15 @@ def register(ui=True):
         min=1
     )
     Scene.knifeimprint_prop_selection_edges_d_threshold = FloatProperty(
-        name='Selection Edges Distance Threshold',
+        name='Edges Selection Distance Threshold',
         default=0.2
     )
     Scene.knifeimprint_prop_selection_edges_r_threshold = FloatProperty(
-        name='Selection Edges Radius Threshold',
+        name='Edges Selection Radius Threshold',
         default=0.21
     )
     Scene.knifeimprint_prop_selection_verts_r_threshold = FloatProperty(
-        name='Selection Verts Radius Threshold',
+        name='Verts Selection Radius Threshold',
         default=0.05
     )
     register_class(KnifeImpring_OT_knife_imprint)
