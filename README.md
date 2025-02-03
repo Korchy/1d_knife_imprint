@@ -10,7 +10,7 @@ This add-on has the following functional:
 
 Current version
 -
-1.5.1.
+1.5.2.
 
 Blender version
 -
@@ -18,6 +18,8 @@ Blender version
 
 Version history
 -
+1.5.2
+- Tooltip changing
 
 1.5.1
 - Button renamed.

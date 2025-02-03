@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 5, 1),
+    "version": (1, 5, 2),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -855,7 +855,7 @@ class KnifeImprint:
 
 class KnifeImpring_OT_selection_project_verts(Operator):
     bl_idname = 'knifeimprint.selection_project_verts'
-    bl_label = 'Verts Selection'
+    bl_label = 'Verts PSelection'
     bl_description = 'top projection, selects matching vertices'
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -878,7 +878,7 @@ class KnifeImpring_OT_selection_project_verts(Operator):
 
 class KnifeImpring_OT_selection_project_edges(Operator):
     bl_idname = 'knifeimprint.selection_project_edges'
-    bl_label = 'Edges Selection'
+    bl_label = 'Edges PSelection'
     bl_description = 'Select active object edges from passive object'
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -938,7 +938,7 @@ class KnifeImpring_OT_selection_project_edges(Operator):
 class KnifeImpring_OT_selection_project(Operator):
     bl_idname = 'knifeimprint.selection_project'
     bl_label = 'Face Project selection'
-    bl_description = 'Select faces by view projection, blocked by passive object polygons'
+    bl_description = 'Selects faces by view projection, visually blocked by passive object polygons'
     bl_options = {'REGISTER', 'UNDO'}
 
     raycast_mode = EnumProperty(
@@ -1053,15 +1053,15 @@ def register(ui=True):
         min=1
     )
     Scene.knifeimprint_prop_selection_edges_d_threshold = FloatProperty(
-        name='Edges Selection Distance Threshold',
+        name='Edges PSelection Distance Threshold',
         default=0.2
     )
     Scene.knifeimprint_prop_selection_edges_r_threshold = FloatProperty(
-        name='Edges Selection Radius Threshold',
+        name='Edges PSelection Radius Threshold',
         default=0.21
     )
     Scene.knifeimprint_prop_selection_verts_r_threshold = FloatProperty(
-        name='Verts Selection Radius Threshold',
+        name='Verts PSelection Radius Threshold',
         default=0.05
     )
     register_class(KnifeImpring_OT_knife_imprint)
