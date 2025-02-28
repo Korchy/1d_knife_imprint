@@ -19,7 +19,7 @@ bl_info = {
     "name": "Knife Imprint",
     "description": "The variation of Knife Project by with casting all edges of source mesh, not only boundary.",
     "author": "Nikita Akimov, Paul Kotelevets",
-    "version": (1, 5, 2),
+    "version": (1, 6, 0),
     "blender": (2, 79, 0),
     "location": "View3D > Tool panel > 1D > Knife Imprint",
     "doc_url": "https://github.com/Korchy/1d_knife_imprint",
@@ -502,14 +502,15 @@ class KnifeImprint:
                 ]
             bm.free()
             # viewport direction vector
-            region = next((_region for _region in context.area.regions if _region.type == 'WINDOW'), None)
-            region_3d = context.area.spaces[0].region_3d
-            viewport_view_direction = region_2d_to_vector_3d(
-                region,
-                region_3d,
-                coord=(region.width / 2.0, region.height / 2.0)
-            )
-            viewport_view_direction.negate()    # from dest_object geometry to viewport
+            # region = next((_region for _region in context.area.regions if _region.type == 'WINDOW'), None)
+            # region_3d = context.area.spaces[0].region_3d
+            # viewport_view_direction = region_2d_to_vector_3d(
+            #     region,
+            #     region_3d,
+            #     coord=(region.width / 2.0, region.height / 2.0)
+            # )
+            # viewport_view_direction.negate()    # from dest_object geometry to viewport
+            viewport_view_direction = cls._viewport_direction(context=context, negate=True)
             # create BVH tree for src object
             src_world_matrix = src_object.matrix_world.copy()
             src_vertices_world = [src_world_matrix * vertex.co for vertex in src_object.data.vertices]
@@ -639,6 +640,93 @@ class KnifeImprint:
             src_object.hide = False
             # force redraw areas
             cls._refresh_areas(context=context)
+
+    @classmethod
+    def mats_project(cls, context, dest_object, src_object, raycast_mode='TRIANGLE', bvh_epsilon=0.0):
+        # transfer materials from src_object (selected) polygons to dest_object (active) polygons by 3D viewport projection
+        #   dest_object is upper src_object
+        if src_object and dest_object:
+            # ray_cast from each vertex of dest_object along the viewport direction vector to check
+            #   intersections with src_object
+            # current mode
+            mode = dest_object.mode
+            if dest_object.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            # list of dest_object vertices with links to linked faces
+            dest_world_matrix = dest_object.matrix_world.copy()
+            bm = bmesh.new()
+            bm.from_mesh(dest_object.data)
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            # get a list of points from which we will raycast from dest_object to src_object
+            if raycast_mode == 'TRIANGLE':
+                # triangulate all faces, each center of triangle is a point for raycasting
+                # create triangulated copy of bmesh
+                bm_copy = bm.copy()
+                # triangulate
+                triangulation = bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method=0, ngon_method=0)
+                # triangulation['face_map'] -> dict {tris: source_face, tris: source_face, ...}
+                # triangulation['face_map'].items() -> a list of pairs [(tris, source face), (tris, source face), ...]
+                # invert face mapping to get format like: {source_face: [tris, tris,...], ...}
+                inv_map = {}
+                for k, v in triangulation['face_map'].items():
+                    inv_map[v] = inv_map.get(v, []) + [k]
+                # get vertices from inverted map
+                # format: [(face.index, (vertex.co, vertex.co, ...)), ...]
+                dest_vertices_co = [
+                    (key.index, tuple(cls._face_center(tuple(dest_world_matrix * vert.co for vert in face.verts))
+                                      for face in value))
+                    for key, value in inv_map.items()
+                ]
+                # tris wasn't add to face_map - why?
+                #   add them from bmesh copy
+                dest_vertices_tris = [
+                    (face.index, (Vector(cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts])),))
+                    for face in bm_copy.faces if len(face.verts) <= 3]
+                dest_vertices_co += dest_vertices_tris
+                # free bm_copy object
+                bm_copy.free()
+            else:
+                # 'FACEDOT' mode
+                # raycast from each polygon center
+                # format: [(face.index, (vertex.co)), ...]
+                dest_vertices_co = [
+                    (face.index, (cls._face_center([dest_world_matrix * vertex.co for vertex in face.verts]), ))
+                    for face in bm.faces
+                ]
+            # viewport direction vector
+            viewport_view_direction = cls._viewport_direction(context=context)
+            # create BVH tree for src object
+            src_world_matrix = src_object.matrix_world.copy()
+            src_vertices_world = [src_world_matrix * vertex.co for vertex in src_object.data.vertices]
+            src_faces = [polygon.vertices for polygon in src_object.data.polygons]
+            src_bvh_tree = BVHTree.FromPolygons(src_vertices_world, src_faces, all_triangles=False, epsilon=bvh_epsilon)
+            # for each des_object face cast rays from all triangle coordinates by viewport direction and check
+            #   hit with src_bvh_tree faces
+            #   [(dest_face_idx, (src_face_idx, src_face_idx, ...)), ...]
+            raycasts = [(face[0], tuple(src_bvh_tree.ray_cast(co, viewport_view_direction)[2] for co in face[1]))
+                        for face in dest_vertices_co]
+            # for each dest_object face get material from founded src_object's face
+            for face_index, src_faces_ids in raycasts:
+                face = dest_object.data.polygons[face_index]
+                src_mats = tuple(src_object.data.polygons[src_face_id].material_index
+                                 for src_face_id in src_faces_ids
+                                 if src_face_id is not None)
+                # get most common material from all founded for this src face materials
+                most_common_src_mat_id = cls._most_common(src_mats)
+                if most_common_src_mat_id:
+                    most_common_src_mat = src_object.data.materials[most_common_src_mat_id]
+                    # append this material to dest_object
+                    if most_common_src_mat.name not in dest_object.data.materials:
+                        dest_object.data.materials.append(most_common_src_mat)
+                    # set this material to dest face
+                    dest_material_id = dest_object.data.materials[:].index(most_common_src_mat)
+                    face.material_index = dest_material_id
+            # free bm object
+            bm.free()
+            # return mode back
+            bpy.ops.object.mode_set(mode=mode)
 
     @classmethod
     def _edge_xy_length(cls, edge: BMEdge):
@@ -771,6 +859,26 @@ class KnifeImprint:
                 area.tag_redraw()
 
     @staticmethod
+    def _viewport_direction(context, negate=False):
+        # viewport direction vector
+        region = next((_region for _region in context.area.regions if _region.type == 'WINDOW'), None)
+        region_3d = context.area.spaces[0].region_3d
+        viewport_view_direction = region_2d_to_vector_3d(
+            region,
+            region_3d,
+            coord=(region.width / 2.0, region.height / 2.0)
+        )
+        if negate:
+            viewport_view_direction.negate()
+        return viewport_view_direction
+
+    @staticmethod
+    def _most_common(lst):
+        # get most common item from list
+        if set(lst):
+            return max(set(lst), key=lst.count)
+
+    @staticmethod
     def ui(layout, context):
         # ui panel
         # Knife Imprint
@@ -848,7 +956,18 @@ class KnifeImprint:
             property='knifeimprint_prop_selection_verts_r_threshold',
             text='Radius Threshold'
         )
-
+        # Mats Project
+        box = layout.box()
+        op = box.operator(
+            operator='knifeimprint.mats_project',
+            icon='MOD_UVPROJECT'
+        )
+        op.mode = context.scene.knifeimprint_prop_mats_project_mode
+        box.prop(
+            data=context.scene,
+            property='knifeimprint_prop_mats_project_mode',
+            text=''
+        )
 
 
 # OPERATORS
@@ -999,6 +1118,32 @@ class KnifeImpring_OT_knife_imprint(Operator):
         )
         return {'FINISHED'}
 
+class KnifeImpring_OT_mats_project(Operator):
+    bl_idname = 'knifeimprint.mats_project'
+    bl_label = 'Mats Project'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    mode = EnumProperty(
+        name='Mats Project Mode',
+        items=[
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 0),
+            ('TRIANGLE', 'TRIANGLE', 'TRIANGLE', '', 1),
+        ],
+        default='TRIANGLE'
+    )
+
+    def execute(self, context):
+        selected_object = context.selected_objects[:]
+        selected_object.remove(context.active_object)
+        selected_object = selected_object[0] if selected_object else selected_object
+        KnifeImprint.mats_project(
+            context=context,
+            dest_object=context.active_object,
+            src_object=selected_object,
+            raycast_mode=self.mode
+        )
+        return {'FINISHED'}
+
 
 # PANELS
 
@@ -1018,6 +1163,14 @@ class KnifeImprint_PT_panel(Panel):
 # REGISTER
 
 def register(ui=True):
+    Scene.knifeimprint_prop_mats_project_mode = EnumProperty(
+        name='Mats Project Mode',
+        items=[
+            ('FACEDOT', 'FACEDOT', 'FACEDOT', '', 0),
+            ('TRIANGLE', 'TRIANGLE', 'TRIANGLE', '', 1),
+        ],
+        default='TRIANGLE'
+    )
     Scene.knifeimprint_prop_selection_edges_mode = EnumProperty(
         name='Selection Edges Mode',
         items=[
@@ -1068,6 +1221,7 @@ def register(ui=True):
     register_class(KnifeImpring_OT_selection_project)
     register_class(KnifeImpring_OT_selection_project_edges)
     register_class(KnifeImpring_OT_selection_project_verts)
+    register_class(KnifeImpring_OT_mats_project)
     if ui:
         register_class(KnifeImprint_PT_panel)
 
@@ -1075,6 +1229,7 @@ def register(ui=True):
 def unregister(ui=True):
     if ui:
         unregister_class(KnifeImprint_PT_panel)
+    unregister_class(KnifeImpring_OT_mats_project)
     unregister_class(KnifeImpring_OT_selection_project_verts)
     unregister_class(KnifeImpring_OT_selection_project_edges)
     unregister_class(KnifeImpring_OT_selection_project)
@@ -1086,6 +1241,7 @@ def unregister(ui=True):
     del Scene.knifeimprint_prop_bvh_epsilon
     del Scene.knifeimprint_prop_selection_mode
     del Scene.knifeimprint_prop_selection_edges_mode
+    del Scene.knifeimprint_prop_mats_project_mode
 
 
 if __name__ == "__main__":

@@ -5,12 +5,22 @@ Blender add-on.
 Add-on functionality
 -
 This add-on has the following functional:
-- Knife Imprint - the variation of the "Knife Project" but with casting all edges of the source mesh, not only boundary edges.
-- Selection Project - selects polygons on the active object that overlaps by another selected object in 3D viewport projection.
+
+**Knife Imprint**
+
+The variation of the "Knife Project" but with casting all edges of the source mesh, not only boundary edges.
+
+**Selection Project**
+
+Selects polygons on the active object that overlaps by another selected object in 3D viewport projection.
+
+**Mats Project**
+
+Transfer materials from source object (selected) polygons to dest object (active) polygons by 3D viewport projection.
 
 Current version
 -
-1.5.2.
+1.6.0.
 
 Blender version
 -
@@ -18,6 +28,9 @@ Blender version
 
 Version history
 -
+1.6.0
+- "Mats Project" added
+
 1.5.2
 - Tooltip changing
 
