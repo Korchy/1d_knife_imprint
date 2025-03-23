@@ -20,7 +20,7 @@ Transfer materials from source object (selected) polygons to dest object (active
 
 Current version
 -
-1.6.0.
+1.6.2.
 
 Blender version
 -
@@ -28,6 +28,15 @@ Blender version
 
 Version history
 -
+1.6.2
+- If most of the triangles of triangled face fail to raycast (not found src face), ignore changing material for this face 
+- Added "selection only" mode for Mats Project. Process only selected faces in Edit mode, ignore hidden faces
+- selection_project() with the VERTEX_SELECT mode switches to the global Vertex selection after execution
+- for project-selection operators select faces on both sides of dest object if screen mode is WIREFRAME, if other than WIREFRAME - select only close side faces on dest object
+
+1.6.1
+- Fixing bugs
+
 1.6.0
 - "Mats Project" added
 
